@@ -114,3 +114,14 @@ The Kalman could keep the polynomial coefficients as states and measurements but
 This would help when worst conditions of the road arise.
 
 
+### Review
+
+Thank you very much for the review,  it was really helpful. I spent some more time playing with color threholds and color spaces using the IPython widget suggested (really nice). ALso saw a suggestion on (https://medium.com/@sujaybabruwad/advanced-lane-finding-project-6476732dcf18) to use an equalized version of the grayscale image, using `cv2.equalizeHist()`, to detect white lanes, it worked quite good, so that's now part of the ` colorThreshold` function.
+Found some more suitable thresholds also for the gradients and changed the kernel size to 15.
+
+The filter is now a little more smart, it tests if the histogram is to be trusted or not depending on the peak width and max value.
+If max value is below a threhold, this means we didn't find enough pixels belonging to the corresponding lane, meaning it is probably better to keep the values from last frame. If the peak is too wide, we captured too many pixels with the thresholds, in this situation it is better to keep the values from last frame as well.
+
+There's also detection of outliers, if from one frame to the next the histogram location falls outside the given margin, histogram location is not taken into acount and windows will deploy from similar location as last frame. This is too avoid jumping to the road's outer limits instead of lane line.
+
+It's looking now much better.
