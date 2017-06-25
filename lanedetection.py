@@ -41,14 +41,15 @@ class LaneDetection():
         #Assumption for meter/pixel
         self.ym_per_pix = 30/720 # meters per pixel in y dimension
         self.xm_per_pix = 3.7/700 # meters per pixel in x dimension
-        self.polyLeft  = []
-        self.polyLeft_px  = []
-        self.confLeft  = 0.0
-        self.polyRight = []
-        self.polyRight_px = []
-        self.confRight = 0.0
         self.curvature = 0.0
         self.deviation = 0.0
+        self.polyLeft_px  = [ 0, 0, 380]
+        self.polyRight_px = [ 0, 0, 1000]
+        self.polyLeft     = [ 0, 0,  2]
+        self.polyRight    = [ 0, 0,  5]
+        self.confLeft  = 0.0
+        self.confRight = 0.0
+        self.age = 0
         
     def calibrateCamera(self, pics="camera_cal/calibration*.jpg", nx=9, ny=6, debugFlag=False):
         """ Calibrate camera using pictures of chessboard
@@ -139,14 +140,14 @@ class LaneDetection():
     def toSingleChannel(self, img):
         """Gets single channel image to analyse with the gradient"""
         
-        return cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+        return (cv2.cvtColor(img,cv2.COLOR_RGB2GRAY))
         
     
     def abs_sobel_thresh(self, img, orient='x', sobel_kernel=3, thresh=(0,255)):
     
         # Apply the following steps to img
         # 1) Convert to grayscale
-        gray = self.toSingleChannel(img)
+        gray = cv2.cvtColor(img, cv2.COLOR_RGB2HLS)[:,:,2]
         # 2) Take the derivative in x or y given orient = 'x' or 'y'
         if orient == 'x':
             sobel = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=sobel_kernel)
@@ -164,7 +165,7 @@ class LaneDetection():
         binarymask[(scaled_sobel >= thresh_min) & (scaled_sobel <= thresh_max)] = 1
         return binarymask
     
-    def mag_thresh(self, img, sobel_kernel=3, mag_thresh=(0, 255)):
+    def mag_thresh(self, img, sobel_kernel=3, mag_thresh=(40, 255)):
     
         # Convert to grayscale
         gray = self.toSingleChannel(img)
@@ -183,7 +184,7 @@ class LaneDetection():
         # Return the binary image
         return binary_output
     
-    def dir_threshold(self, img, sobel_kernel=3, thresh=(0, np.pi/2)):
+    def dir_threshold(self, img, sobel_kernel=15, thresh=(0.5, 1.2)):
         # Convert to grayscale
         gray = self.toSingleChannel(img)
         # Take both Sobel x and y gradients
@@ -198,12 +199,12 @@ class LaneDetection():
         # Return the binary image
         return binary_output
 
-    def colorThreshold(self, img, thresh=(90,255), debugFlag=False):
-        hls = cv2.cvtColor(img, cv2.COLOR_RGB2HLS)
-        L = hls[:,:,1]
-        S = hls[:,:,2]
+    def colorThreshold(self, img, thresh=(210,255), th=(253,255), debugFlag=False):
+
+        S = cv2.cvtColor(img, cv2.COLOR_RGB2HLS)[:,:,2]
+        W = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
         mask = np.zeros_like(S)
-        mask[(S > thresh[0]) & (S <= thresh[1]) & (L > 120)] = 1
+        mask[(cv2.equalizeHist(S) > thresh[0]) | (cv2.equalizeHist(W) > th[0])] = 1
         
         if debugFlag:
             f, ((ax1, ax2, ax3)) = plt.subplots(1, 3, figsize=(10))
@@ -219,14 +220,14 @@ class LaneDetection():
     def getLanes(self, image, debugFlag=False):
         """Combined Filter, color + gradients"""
         ksize = 7
-        gradx = self.abs_sobel_thresh(image, orient='x', sobel_kernel=ksize, thresh=(20, 255))
-        grady = self.abs_sobel_thresh(image, orient='y', sobel_kernel=ksize, thresh=(50, 255))
-        #mag_binary = self.mag_thresh(image, sobel_kernel=ksize, mag_thresh=(30, 255))
-        #dir_binary = self.dir_threshold(image, sobel_kernel=ksize, thresh=(0.7, 1.3))
-        color_binary = self.colorThreshold(image, thresh=(30, 255))
+        #gradx = self.abs_sobel_thresh(image, orient='x', sobel_kernel=ksize, thresh=(20, 255))
+        #grady = self.abs_sobel_thresh(image, orient='y', sobel_kernel=ksize, thresh=(50, 255))
+        mag_binary = self.mag_thresh(image, sobel_kernel=ksize, mag_thresh=(40, 255))
+        dir_binary = self.dir_threshold(image, sobel_kernel=ksize, thresh=(0.5, 1.2))
+        color_binary = self.colorThreshold(image)
         
-        combined = np.zeros_like(gradx)
-        combined[ ((gradx == 1) & (grady == 1)) | (color_binary == 1)] = 1
+        combined = np.zeros_like(color_binary)
+        combined[ (color_binary==1) | ((mag_binary==1) & (dir_binary==1)) ] = 1
 
         if debugFlag:
             f, ((ax1, ax2)) = plt.subplots(1, 2, figsize=(10,10))
@@ -236,7 +237,7 @@ class LaneDetection():
             ax2.set_title('Combined mask')
             
         return combined
-
+    
     def drawFilled(self, img, vertices, color=[0,0,255] ):
         
         return cv2.fillConvexPoly(img, vertices, color)
@@ -286,14 +287,39 @@ class LaneDetection():
         margin -- Set the width of the windows +/- margin
         """
         histogram = np.sum(binary_warped[binary_warped.shape[0]//2:,:], axis=0)
-        # Create an output image to draw on and  visualize the result
-        out_img = np.dstack((binary_warped, binary_warped, binary_warped))*255
+        if debugFlag:
+            plt.figure
+            plt.plot(720-histogram)
+            plt.show
+            # Create an output image to draw on and  visualize the result
+            out_img = np.dstack((binary_warped, binary_warped, binary_warped))*255
         # Find the peak of the left and right halves of the histogram
         # These will be the starting point for the left and right lines
         midpoint = np.int(histogram.shape[0]/2)
         leftx_base = np.argmax(histogram[:midpoint])
         rightx_base = np.argmax(histogram[midpoint:]) + midpoint
         
+        nottrust = [False, False]
+        maxleft = np.max(histogram[:midpoint])
+        naboveL = np.sum(histogram[:midpoint] > 0.5 * maxleft)
+        maxright = np.max(histogram[midpoint:])
+        naboveR = np.sum(histogram[midpoint:] > 0.5 * maxright)
+        if naboveL > 50 or naboveL < 10:
+            #Histogram has broad peaks, not to be trusted
+            nottrust[0] = True
+            leftx_base = self.polyLeft_px[-1]
+        if np.abs(leftx_base - self.polyLeft_px[-1]) > margin/2:
+            #Prevent outliers
+            leftx_base = self.polyLeft_px[-1]
+            
+        if naboveR > 50 or naboveR < 10:
+            #Histogram has broad peaks, not to be trusted
+            nottrust[1] = True
+            rightx_base = self.polyRight_px[-1]
+        if np.abs(rightx_base - self.polyRight_px[-1]) > margin/2:
+            #Prevent outliers
+            rightx_base = self.polyRight_px[-1]
+            
         # Choose the number of sliding windows
         nwindows = 10
         
@@ -358,23 +384,23 @@ class LaneDetection():
         righty = nonzeroy[right_lane_inds] 
         
         # Fit a second order polynomial to each
-        if len(leftx)==0 or len(lefty)==0:
+        if len(leftx)==0 or nottrust[0]:
             left_fit_m = self.polyLeft
             left_fit   = self.polyLeft_px
         else:
             left_fit = np.polyfit(lefty, leftx, 2)
             left_fit_m = np.polyfit(lefty*self.ym_per_pix, leftx*self.xm_per_pix, 2)
         
-        if len(rightx)==0 or len(righty)==0:
+        if len(rightx)==0 or nottrust[1]:
             right_fit_m = self.polyRight
             right_fit   = self.polyRight_px
         else:
             right_fit = np.polyfit(righty, rightx, 2)
             right_fit_m = np.polyfit(righty*self.ym_per_pix, rightx*self.xm_per_pix, 2)
         
-        scene = np.zeros_like(out_img)
-        scene[nonzeroy[left_lane_inds], nonzerox[left_lane_inds]] = [255, 0, 0]
-        scene[nonzeroy[right_lane_inds], nonzerox[right_lane_inds]] = [0, 0, 255]
+        scene = np.zeros((binary_warped.shape[0], binary_warped.shape[1], 3), dtype=np.uint8)
+        scene[nonzeroy[left_lane_inds], nonzerox[left_lane_inds]] = [0, 0, 255]
+        scene[nonzeroy[right_lane_inds], nonzerox[right_lane_inds]] = [255, 0, 0]
         
         if debugFlag:
             # Generate x and y values for plotting
@@ -382,14 +408,14 @@ class LaneDetection():
             left_fitx = left_fit[0]*ploty**2 + left_fit[1]*ploty + left_fit[2]
             right_fitx = right_fit[0]*ploty**2 + right_fit[1]*ploty + right_fit[2]
             
-            out_img[nonzeroy[left_lane_inds], nonzerox[left_lane_inds]] = [255, 0, 0]
-            out_img[nonzeroy[right_lane_inds], nonzerox[right_lane_inds]] = [0, 0, 255]
+            out_img[nonzeroy[left_lane_inds], nonzerox[left_lane_inds]] = [0, 0, 255]
+            out_img[nonzeroy[right_lane_inds], nonzerox[right_lane_inds]] = [255, 0, 0]
             plt.imshow(out_img)
             plt.plot(left_fitx, ploty, color='yellow')
             plt.plot(right_fitx, ploty, color='yellow')
             plt.xlim(0, 1280)
             plt.ylim(720, 0)
-
+            
         return (left_fit_m, right_fit_m, conf_left, conf_right, left_fit, right_fit, scene)
     
     def getCurvature(self, y_eval=710):
@@ -404,20 +430,23 @@ class LaneDetection():
         return ((left_fitx+right_fitx)/2.0 - 1280.0/2) * self.xm_per_pix
     
     def calc_curvature(self, poly, y_eval):
-        """Computes curvature in meters"""    
-        curverad = ((1 + (2*poly[0]*y_eval*self.ym_per_pix + poly[1])**2)**1.5) / np.absolute(2*poly[0])    
-        return curverad
+        """Computes curvature in meters"""
+        if poly[0] == 0.0:
+            return 0.0
+        else:
+            curverad = ((1 + (2*poly[0]*y_eval*self.ym_per_pix + poly[1])**2)**1.5) / np.absolute(2*poly[0])    
+            return curverad
         
     def update(self, polyInfo):
         """Simple smoothing of the polynomial coefficients"""    
         iircoef = [0.95, 0.95, 0.95]
         
         (left_fit, right_fit, conf_left, conf_right, left_fit_px, right_fit_px) = polyInfo
-        if len(self.polyLeft) == 0:
+        if (len(self.polyLeft) == 0) or (self.age == 0):
             self.polyLeft = left_fit
             self.polyLeft_px = left_fit_px
             
-        if len(self.polyRight) == 0:
+        if (len(self.polyRight) == 0) or (self.age == 0):
             self.polyRight = right_fit
             self.polyRight_px = right_fit_px
             
@@ -426,6 +455,8 @@ class LaneDetection():
             self.polyRight[i] = right_fit[i]*(1.0-iircoef[i]) + iircoef[i]*self.polyRight[i] 
             self.polyLeft_px[i] = left_fit_px[i]*(1.0-iircoef[i]) + iircoef[i]*self.polyLeft_px[i]
             self.polyRight_px[i] = right_fit_px[i]*(1.0-iircoef[i]) + iircoef[i]*self.polyRight_px[i] 
+        
+        self.age += 1
         
     def lanePoly(self, top=0, bottom=719):
         
@@ -439,7 +470,7 @@ class LaneDetection():
         
         return poly
         
-    def process_frame(self, frame):
+    def process_frame(self, frame, debugFlag=False):
         """ Complete frame processing.
         Updates laneDetection object with latest frame information
         Input:
@@ -461,7 +492,7 @@ class LaneDetection():
         mask[ (img2 > 0) ] = 1
         
         # Get polynomials from binary mask
-        (left_fit, right_fit, conf_left, conf_right,L,R, back) = self.sliding_window( np.uint8(mask))
+        (left_fit, right_fit, conf_left, conf_right,L,R, back) = self.sliding_window( np.uint8(mask), debugFlag=debugFlag)
         
         # Update Polynomial coefficient estimates
         self.update((left_fit, right_fit, conf_left, conf_right,L,R))
@@ -486,10 +517,9 @@ class LaneDetection():
             side = "right"
         
         
-        
         #Inverse perspective to get polygon back to the lane in original frame
         Minv = cv2.getPerspectiveTransform(np.float32(self.pDest), np.float32(self.pSource))
-        iframe = cv2.warpPerspective(Pol+back, Minv, (Pol.shape[1],Pol.shape[0]), flags=cv2.INTER_LINEAR)
+        iframe = cv2.warpPerspective(back+Pol, Minv, (Pol.shape[1],Pol.shape[0]), flags=cv2.INTER_LINEAR)
         
         iframe= weighted_img(frame, iframe, α=0.4, β=1.0, λ=0.0)
         
@@ -500,9 +530,13 @@ class LaneDetection():
         iframe= cv2.putText(iframe, "Curv:"+ str(curv)  +"m", (0,50), cv2.FONT_HERSHEY_PLAIN, 3, [255,0,0],thickness=4)
         iframe= cv2.putText(iframe, "offset:"+ str(off)  +"cm to the "+ side, (0,100), cv2.FONT_HERSHEY_PLAIN, 3, [255,0,0],thickness=4)
         
-        #Prepare output frame
+        if debugFlag:
+            pass
+            
+            
         return iframe
-        
+
+
 if __name__ == "__main__":
     debugFlag = False
     LL = LaneDetection()
@@ -515,17 +549,17 @@ if __name__ == "__main__":
     
     if not debugFlag:
         white_output = 'white.mp4'
-        clip1 = VideoFileClip("project_video.mp4")
-        print(clip1)
-        white_clip = clip1.fl_image(LL.process_frame) #NOTE: this function expects color images!!
+        clip1 = VideoFileClip("challenge_video.mp4")
+        
+        white_clip = clip1.fl_image(LL.process_frame)
         white_clip.write_videofile(white_output, audio=False)
 
     if debugFlag:
         
-        img = mpimg.imread("test_images/test6.jpg")
+        img = mpimg.imread("test_images/test5.jpg")
         # Process frame 
-        img1 = LL.process_frame(img)
-        f, ((ax1, ax2)) = plt.subplots(1, 2, figsize=(10,10))
+        img1 = LL.process_frame(img, debugFlag=False)
+        f, ((ax1, ax2)) = plt.subplots(1, 2, figsize=(15,15))
         ax1.imshow(img)
         ax1.set_title('Original')
         ax2.imshow(img1)
